@@ -7,7 +7,7 @@ from typing import List, Optional
 # Try to import TTS libraries
 TTS_ENGINE = None
 try:
-    import pyttsx3
+    import pyttsx3 # type: ignore
     TTS_ENGINE = "pyttsx3"
 except ImportError:
     try:
@@ -40,7 +40,7 @@ class TTSManager:
         """Test TTS availability and display voice information"""
         if TTS_ENGINE == "pyttsx3":
             try:
-                test_engine = pyttsx3.init()
+                test_engine = pyttsx3.init() # type: ignore
                 voices = test_engine.getProperty('voices')
                 print("Available TTS voices:")
                 for i, voice in enumerate(voices[:5]):  # Show first 5
@@ -54,7 +54,7 @@ class TTSManager:
                 
         elif TTS_ENGINE == "sapi":
             try:
-                test_engine = win32com.client.Dispatch("SAPI.SpVoice")
+                test_engine = win32com.client.Dispatch("SAPI.SpVoice") # type: ignore
                 print("✅ TTS (SAPI) is available")
             except Exception as e:
                 print(f"SAPI TTS test failed: {e}")
@@ -81,13 +81,13 @@ class TTSManager:
         if TTS_ENGINE == "pyttsx3":
             tts_engine = None
             try:
-                tts_engine = pyttsx3.init()
+                tts_engine = pyttsx3.init() # type: ignore
                 tts_engine.setProperty('rate', self.speech_rate)
                 tts_engine.setProperty('volume', self.volume)
                 
                 if self.current_voice_id:
                     try:
-                        tts_engine.setProperty('voice', self.current_voice_id)
+                        tts_engine.setProperty('voice', self.current_voice_id) # type: ignore
                     except:
                         pass
                 
@@ -106,7 +106,7 @@ class TTSManager:
                         
         elif TTS_ENGINE == "sapi":
             try:
-                sapi_engine = win32com.client.Dispatch("SAPI.SpVoice")
+                sapi_engine = win32com.client.Dispatch("SAPI.SpVoice") # type: ignore
                 sapi_engine.Speak(text)
             except Exception as e:
                 pass  # Silently fail
@@ -148,7 +148,7 @@ class TTSManager:
         voices = []
         if TTS_ENGINE == "pyttsx3":
             try:
-                temp_engine = pyttsx3.init()
+                temp_engine = pyttsx3.init() # type: ignore
                 engine_voices = temp_engine.getProperty('voices')
                 for i, voice in enumerate(engine_voices):
                     voices.append({
@@ -167,7 +167,7 @@ class TTSManager:
         """Set TTS voice by index"""
         if TTS_ENGINE == "pyttsx3":
             try:
-                temp_engine = pyttsx3.init()
+                temp_engine = pyttsx3.init() # type: ignore
                 voices = temp_engine.getProperty('voices')
                 if 0 <= voice_index < len(voices):
                     self.current_voice_id = voices[voice_index].id
@@ -217,4 +217,3 @@ class TTSManager:
         """Test TTS with sample text"""
         test_text = "This is a test of the text to speech system. Testing one, two, three."
         self.speak_text(test_text)
-
