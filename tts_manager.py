@@ -43,7 +43,7 @@ class TTSManager:
                 test_engine = pyttsx3.init() # type: ignore
                 voices = test_engine.getProperty('voices')
                 print("Available TTS voices:")
-                for i, voice in enumerate(voices[:5]):  # Show first 5
+                for i, voice in enumerate(voices[:5]):  # type: ignore # Show first 5
                     print(f"  {i}: {voice.name}")
                 test_engine.stop()
                 del test_engine
@@ -144,13 +144,22 @@ class TTSManager:
                 print(f"TTS worker error: {e}")
     
     def get_voices(self) -> List[dict]:
-        """Get available TTS voices"""
+        """Get available TTS voices - must be called from main thread or with COM initialized"""
         voices = []
         if TTS_ENGINE == "pyttsx3":
             try:
+                # Initialize COM for this thread if on Windows
+                import sys
+                if sys.platform == 'win32':
+                    try:
+                        import pythoncom
+                        pythoncom.CoInitialize()
+                    except:
+                        pass
+                
                 temp_engine = pyttsx3.init() # type: ignore
                 engine_voices = temp_engine.getProperty('voices')
-                for i, voice in enumerate(engine_voices):
+                for i, voice in enumerate(engine_voices): # type: ignore
                     voices.append({
                         'index': i,
                         'name': voice.name,
@@ -159,6 +168,15 @@ class TTSManager:
                     })
                 temp_engine.stop()
                 del temp_engine
+                
+                # Uninitialize COM
+                if sys.platform == 'win32':
+                    try:
+                        import pythoncom
+                        pythoncom.CoUninitialize()
+                    except:
+                        pass
+                        
             except Exception as e:
                 print(f"Error getting voices: {e}")
         return voices
@@ -167,15 +185,41 @@ class TTSManager:
         """Set TTS voice by index"""
         if TTS_ENGINE == "pyttsx3":
             try:
+                # Initialize COM for this thread if on Windows
+                import sys
+                if sys.platform == 'win32':
+                    try:
+                        import pythoncom
+                        pythoncom.CoInitialize()
+                    except:
+                        pass
+                
                 temp_engine = pyttsx3.init() # type: ignore
                 voices = temp_engine.getProperty('voices')
-                if 0 <= voice_index < len(voices):
-                    self.current_voice_id = voices[voice_index].id
+                if 0 <= voice_index < len(voices): # type: ignore
+                    self.current_voice_id = voices[voice_index].id # type: ignore
                     temp_engine.stop()
                     del temp_engine
+                    
+                    # Uninitialize COM
+                    if sys.platform == 'win32':
+                        try:
+                            import pythoncom
+                            pythoncom.CoUninitialize()
+                        except:
+                            pass
                     return True
                 temp_engine.stop()
                 del temp_engine
+                
+                # Uninitialize COM
+                if sys.platform == 'win32':
+                    try:
+                        import pythoncom
+                        pythoncom.CoUninitialize()
+                    except:
+                        pass
+                        
             except Exception as e:
                 print(f"Error setting voice: {e}")
         return False
