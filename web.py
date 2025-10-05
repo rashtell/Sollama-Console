@@ -5,7 +5,7 @@ import gradio as gr
 import threading
 import tempfile
 import os
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 
 from config import DEFAULT_MODEL, DEFAULT_OLLAMA_URL, DEFAULT_SPEECH_RATE, DEFAULT_VOLUME, DEFAULT_MAX_MEMORY
@@ -36,8 +36,10 @@ class SollamaGradioInterface:
         self.client = OllamaClient(DEFAULT_MODEL)
         self.is_processing = False
         self.available_models = []
+        self.available_voices = []
         self.last_response = ""
         self._load_available_models()
+        self._load_available_voices()
         
     def _load_available_models(self):
         """Load available models on initialization"""
@@ -50,9 +52,24 @@ class SollamaGradioInterface:
             print(f"Error loading models: {e}")
             self.available_models = [DEFAULT_MODEL]
     
+    def _load_available_voices(self):
+        """Load available TTS voices on initialization"""
+        try:
+            voices = self.tts.get_voices()
+            self.available_voices = [(f"{v['index']}: {v['name']}", v['index']) for v in voices]
+            if not self.available_voices:
+                self.available_voices = [("No voices available", 0)]
+        except Exception as e:
+            print(f"Error loading voices: {e}")
+            self.available_voices = [("Error loading voices", 0)]
+    
     def get_model_choices(self) -> List[str]:
         """Get list of available models for dropdown"""
         return self.available_models if self.available_models else [DEFAULT_MODEL]
+    
+    def get_voice_choices(self) -> List[Tuple[str, int]]:
+        """Get list of available voices for dropdown"""
+        return self.available_voices
     
     def _text_to_audio_file(self, text: str) -> Optional[str]:
         """Convert text to audio file for web playback"""
@@ -74,7 +91,7 @@ class SollamaGradioInterface:
             temp_file.close()
             
             # Generate audio
-            engine = pyttsx3.init() # type: ignore
+            engine = pyttsx3.init()
             engine.setProperty('rate', self.tts.speech_rate)
             engine.setProperty('volume', self.tts.volume)
             
@@ -195,38 +212,44 @@ class SollamaGradioInterface:
         except Exception as e:
             return None, f"Error testing TTS: {str(e)}"
     
-    def get_available_voices(self) -> str:
-        """Get list of available TTS voices"""
+    def change_voice(self, voice_index: int) -> tuple[gr.Dropdown, str]:
+        """Change TTS voice and update dropdown"""
         if TTS_ENGINE != "pyttsx3":
-            return "TTS not available (pyttsx3 required)"
-        
-        try:
-            voices = self.tts.get_voices()
-            if not voices:
-                return "No voices found"
-            
-            voice_list = "Available voices:\n\n"
-            for voice in voices:
-                marker = " (CURRENT)" if voice['current'] else ""
-                voice_list += f"{voice['index']}: {voice['name']}{marker}\n"
-            return voice_list
-        except Exception as e:
-            return f"Error getting voices: {str(e)}"
-    
-    def change_voice(self, voice_index: int) -> str:
-        """Change TTS voice"""
-        if TTS_ENGINE != "pyttsx3":
-            return "TTS not available (pyttsx3 required)"
+            return gr.Dropdown(), "TTS not available (pyttsx3 required)"
         
         try:
             if self.tts.set_voice(voice_index):
+                # Reload voices to update current marker
+                self._load_available_voices()
                 voices = self.tts.get_voices()
                 if voices and voice_index < len(voices):
-                    return f"Voice changed to: {voices[voice_index]['name']}"
-                return f"Voice changed to index: {voice_index}"
-            return "Failed to change voice or invalid voice index"
+                    return (
+                        gr.Dropdown(choices=self.get_voice_choices(), value=voice_index),
+                        f"Voice changed to: {voices[voice_index]['name']}"
+                    )
+                return (
+                    gr.Dropdown(choices=self.get_voice_choices(), value=voice_index),
+                    f"Voice changed to index: {voice_index}"
+                )
+            return gr.Dropdown(choices=self.get_voice_choices()), "Failed to change voice or invalid voice index"
         except Exception as e:
-            return f"Error changing voice: {str(e)}"
+            return gr.Dropdown(choices=self.get_voice_choices()), f"Error changing voice: {str(e)}"
+    
+    def refresh_voices(self) -> tuple[gr.Dropdown, str]:
+        """Refresh the list of available voices"""
+        self._load_available_voices()
+        current_index = 0
+        if self.tts.current_voice_id:
+            voices = self.tts.get_voices()
+            for v in voices:
+                if v['current']:
+                    current_index = v['index']
+                    break
+        
+        return (
+            gr.Dropdown(choices=self.get_voice_choices(), value=current_index),
+            f"Refreshed! Found {len(self.available_voices)} voices"
+        )
     
     def clear_memory(self) -> tuple[List, str]:
         """Clear conversation memory"""
@@ -325,7 +348,7 @@ def create_interface():
     if not SystemChecker.check_ollama_installation():
         print("Warning: Ollama not detected. Some features may not work.")
     
-    with gr.Blocks(title="Sollama - AI Chat with Memory", theme="soft") as interface:
+    with gr.Blocks(title="Sollama - AI Chat with Memory", theme=gr.themes.Soft()) as interface:
         
         gr.Markdown("# Sollama - AI Chat with Memory")
         gr.Markdown("Chat with Ollama models with conversation memory and text-to-speech capabilities")
@@ -366,20 +389,6 @@ def create_interface():
                     interactive=False,
                     lines=2
                 )
-        
-                gr.Markdown("""
-                ### Features
-                - **Conversation Memory**: Context is preserved across messages
-                - **Model Switching**: Change models on the fly
-                - **System Prompts**: Customize assistant behavior
-                - **Memory Persistence**: Save and load conversation history
-                - **TTS Support**: Text-to-speech with audio playback in browser
-                - **Streaming**: Real-time response generation
-                - **Voice Selection**: Choose from available system voices
-                - **Custom TTS**: Speak any custom text
-                
-                **Note**: TTS generates audio files that play in your browser. Requires pyttsx3 to be installed.
-                """)
             
             with gr.Column(scale=1):
                 # Settings panel
@@ -440,14 +449,13 @@ def create_interface():
                     apply_tts_btn = gr.Button("Apply TTS Settings", size="sm")
                     
                     gr.Markdown("#### Voice Selection")
-                    list_voices_btn = gr.Button("List Available Voices", size="sm")
-                    voice_index_input = gr.Number(
-                        label="Voice Index",
+                    voice_dropdown = gr.Dropdown(
+                        label="Select Voice",
+                        choices=app.get_voice_choices(),
                         value=0,
-                        precision=0,
-                        minimum=0
+                        interactive=True
                     )
-                    change_voice_btn = gr.Button("Change Voice", size="sm")
+                    refresh_voices_btn = gr.Button("Refresh Voices", size="sm")
                     
                     gr.Markdown("#### TTS Testing")
                     test_tts_btn = gr.Button("Test TTS", size="sm")
@@ -513,7 +521,7 @@ def create_interface():
             outputs=[chatbot, model_status]
         )
         
-        # TTS functionality - updated to use audio output
+        # TTS functionality
         speak_last_btn.click(
             app.speak_last_response,
             outputs=[audio_output, status_output]
@@ -530,15 +538,15 @@ def create_interface():
             outputs=[audio_output, model_status]
         )
         
-        list_voices_btn.click(
-            app.get_available_voices,
-            outputs=model_status
+        voice_dropdown.change(
+            app.change_voice,
+            inputs=voice_dropdown,
+            outputs=[voice_dropdown, model_status]
         )
         
-        change_voice_btn.click(
-            app.change_voice,
-            inputs=voice_index_input,
-            outputs=model_status
+        refresh_voices_btn.click(
+            app.refresh_voices,
+            outputs=[voice_dropdown, model_status]
         )
         
         # Model settings
@@ -572,6 +580,20 @@ def create_interface():
             inputs=[tts_rate, tts_volume, tts_mute],
             outputs=model_status
         )
+        
+        gr.Markdown("""
+        ### Features
+        - **Conversation Memory**: Context is preserved across messages
+        - **Model Switching**: Change models on the fly
+        - **System Prompts**: Customize assistant behavior
+        - **Memory Persistence**: Save and load conversation history
+        - **TTS Support**: Text-to-speech with audio playback in browser
+        - **Streaming**: Real-time response generation
+        - **Voice Selection**: Choose from available system voices
+        - **Custom TTS**: Speak any custom text
+        
+        **Note**: TTS generates audio files that play in your browser. Requires pyttsx3 to be installed.
+        """)
     
     return interface
 
