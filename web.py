@@ -1,18 +1,30 @@
 # File: gradio_interface.py
 """Gradio web interface for Sollama"""
 
-import threading
-from datetime import datetime
-from typing import Dict, List, Optional
-
 import gradio as gr
+import threading
+import tempfile
+import os
+from typing import List, Dict, Optional
+from datetime import datetime
 
-from config import (DEFAULT_MAX_MEMORY, DEFAULT_MODEL, DEFAULT_OLLAMA_URL,
-                    DEFAULT_SPEECH_RATE, DEFAULT_VOLUME)
+from config import DEFAULT_MODEL, DEFAULT_OLLAMA_URL, DEFAULT_SPEECH_RATE, DEFAULT_VOLUME, DEFAULT_MAX_MEMORY
 from memory_manager import ConversationMemory
+from tts_manager import TTSManager
 from ollama_client import OllamaClient
 from system_checker import SystemChecker
-from tts_manager import TTSManager
+
+# Try to import TTS libraries
+TTS_ENGINE = None
+try:
+    import pyttsx3
+    TTS_ENGINE = "pyttsx3"
+except ImportError:
+    try:
+        import win32com.client
+        TTS_ENGINE = "sapi"
+    except ImportError:
+        print("No TTS library found. Install with: pip install pyttsx3")
 
 
 class SollamaGradioInterface:
@@ -41,6 +53,55 @@ class SollamaGradioInterface:
     def get_model_choices(self) -> List[str]:
         """Get list of available models for dropdown"""
         return self.available_models if self.available_models else [DEFAULT_MODEL]
+    
+    def _text_to_audio_file(self, text: str) -> Optional[str]:
+        """Convert text to audio file for web playback"""
+        if not text.strip() or TTS_ENGINE != "pyttsx3":
+            return None
+        
+        try:
+            # Initialize COM for Windows
+            import sys
+            if sys.platform == 'win32':
+                try:
+                    import pythoncom
+                    pythoncom.CoInitialize()
+                except:
+                    pass
+            
+            # Create temporary audio file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+            temp_file.close()
+            
+            # Generate audio
+            engine = pyttsx3.init() # type: ignore
+            engine.setProperty('rate', self.tts.speech_rate)
+            engine.setProperty('volume', self.tts.volume)
+            
+            if self.tts.current_voice_id:
+                try:
+                    engine.setProperty('voice', self.tts.current_voice_id)
+                except:
+                    pass
+            
+            engine.save_to_file(text, temp_file.name)
+            engine.runAndWait()
+            engine.stop()
+            del engine
+            
+            # Cleanup COM
+            if sys.platform == 'win32':
+                try:
+                    import pythoncom
+                    pythoncom.CoUninitialize()
+                except:
+                    pass
+            
+            return temp_file.name
+            
+        except Exception as e:
+            print(f"Error generating audio: {e}")
+            return None
         
     def chat(self, message: str, history: List[Dict]) -> List[Dict]:
         """Process chat message and return updated history"""
@@ -88,64 +149,56 @@ class SollamaGradioInterface:
         finally:
             self.is_processing = False
     
-    def speak_last_response(self) -> str:
-        """Speak the last assistant response"""
+    def speak_last_response(self) -> tuple[Optional[str], str]:
+        """Speak the last assistant response - returns audio file for web"""
         if not self.last_response:
-            return "No response to speak"
+            return None, "No response to speak"
         
-        if not self.tts.tts_available:
-            return "TTS not available on this system"
+        if TTS_ENGINE != "pyttsx3":
+            return None, "TTS not available (pyttsx3 required)"
         
         try:
-            # Start speaking in a separate thread to avoid blocking UI
-            threading.Thread(
-                target=self.tts.speak_text,
-                args=(self.last_response,),
-                daemon=True
-            ).start()
-            return f"Speaking response ({len(self.last_response)} characters)..."
+            audio_file = self._text_to_audio_file(self.last_response)
+            if audio_file:
+                return audio_file, f"Generated audio ({len(self.last_response)} characters)"
+            return None, "Failed to generate audio"
         except Exception as e:
-            return f"Error speaking: {str(e)}"
+            return None, f"Error speaking: {str(e)}"
     
-    def speak_custom_text(self, text: str) -> str:
-        """Speak custom text"""
+    def speak_custom_text(self, text: str) -> tuple[Optional[str], str]:
+        """Speak custom text - returns audio file for web"""
         if not text.strip():
-            return "Please enter text to speak"
+            return None, "Please enter text to speak"
         
-        if not self.tts.tts_available:
-            return "TTS not available on this system"
+        if TTS_ENGINE != "pyttsx3":
+            return None, "TTS not available (pyttsx3 required)"
         
         try:
-            # Start speaking in a separate thread to avoid blocking UI
-            threading.Thread(
-                target=self.tts.speak_text,
-                args=(text,),
-                daemon=True
-            ).start()
-            return f"Speaking text ({len(text)} characters)..."
+            audio_file = self._text_to_audio_file(text)
+            if audio_file:
+                return audio_file, f"Generated audio ({len(text)} characters)"
+            return None, "Failed to generate audio"
         except Exception as e:
-            return f"Error speaking: {str(e)}"
+            return None, f"Error speaking: {str(e)}"
     
-    def test_tts(self) -> str:
-        """Test TTS with sample text"""
-        if not self.tts.tts_available:
-            return "TTS not available on this system"
+    def test_tts(self) -> tuple[Optional[str], str]:
+        """Test TTS with sample text - returns audio file for web"""
+        if TTS_ENGINE != "pyttsx3":
+            return None, "TTS not available (pyttsx3 required)"
         
         test_text = "This is a test of the text to speech system. Testing one, two, three."
         try:
-            threading.Thread(
-                target=self.tts.speak_text,
-                args=(test_text,),
-                daemon=True
-            ).start()
-            return "Playing TTS test..."
+            audio_file = self._text_to_audio_file(test_text)
+            if audio_file:
+                return audio_file, "Playing TTS test..."
+            return None, "Failed to generate test audio"
         except Exception as e:
-            return f"Error testing TTS: {str(e)}"
+            return None, f"Error testing TTS: {str(e)}"
     
     def get_available_voices(self) -> str:
         """Get list of available TTS voices"""
-        if not self.tts.tts_available:
-            return "TTS not available on this system"
+        if TTS_ENGINE != "pyttsx3":
+            return "TTS not available (pyttsx3 required)"
         
         try:
             voices = self.tts.get_voices()
@@ -162,8 +215,8 @@ class SollamaGradioInterface:
     
     def change_voice(self, voice_index: int) -> str:
         """Change TTS voice"""
-        if not self.tts.tts_available:
-            return "TTS not available on this system"
+        if TTS_ENGINE != "pyttsx3":
+            return "TTS not available (pyttsx3 required)"
         
         try:
             if self.tts.set_voice(voice_index):
@@ -301,6 +354,13 @@ def create_interface():
                     memory_status_btn = gr.Button("Memory Status", size="sm")
                     speak_last_btn = gr.Button("Speak Last Response", size="sm", variant="secondary")
                 
+                # Audio player for TTS output
+                audio_output = gr.Audio(
+                    label="TTS Audio",
+                    autoplay=True,
+                    visible=True
+                )
+                
                 status_output = gr.Textbox(
                     label="Status",
                     interactive=False,
@@ -313,10 +373,12 @@ def create_interface():
                 - **Model Switching**: Change models on the fly
                 - **System Prompts**: Customize assistant behavior
                 - **Memory Persistence**: Save and load conversation history
-                - **TTS Support**: Text-to-speech capabilities (desktop only)
+                - **TTS Support**: Text-to-speech with audio playback in browser
                 - **Streaming**: Real-time response generation
                 - **Voice Selection**: Choose from available system voices
                 - **Custom TTS**: Speak any custom text
+                
+                **Note**: TTS generates audio files that play in your browser. Requires pyttsx3 to be installed.
                 """)
             
             with gr.Column(scale=1):
@@ -451,21 +513,21 @@ def create_interface():
             outputs=[chatbot, model_status]
         )
         
-        # TTS functionality
+        # TTS functionality - updated to use audio output
         speak_last_btn.click(
             app.speak_last_response,
-            outputs=status_output
+            outputs=[audio_output, status_output]
         )
         
         test_tts_btn.click(
             app.test_tts,
-            outputs=model_status
+            outputs=[audio_output, model_status]
         )
         
         speak_custom_btn.click(
             app.speak_custom_text,
             inputs=custom_text_input,
-            outputs=model_status
+            outputs=[audio_output, model_status]
         )
         
         list_voices_btn.click(
