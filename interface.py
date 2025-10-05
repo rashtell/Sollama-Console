@@ -1,16 +1,18 @@
 # File: gradio_interface.py
 """Gradio web interface for Sollama"""
 
-import gradio as gr
 import threading
-from typing import List, Dict, Optional
 from datetime import datetime
+from typing import Dict, List, Optional
 
-from config import DEFAULT_MODEL, DEFAULT_OLLAMA_URL, DEFAULT_SPEECH_RATE, DEFAULT_VOLUME, DEFAULT_MAX_MEMORY
+import gradio as gr
+
+from config import (DEFAULT_MAX_MEMORY, DEFAULT_MODEL, DEFAULT_OLLAMA_URL,
+                    DEFAULT_SPEECH_RATE, DEFAULT_VOLUME)
 from memory_manager import ConversationMemory
-from tts_manager import TTSManager
 from ollama_client import OllamaClient
 from system_checker import SystemChecker
+from tts_manager import TTSManager
 
 
 class SollamaGradioInterface:
@@ -270,7 +272,7 @@ def create_interface():
     if not SystemChecker.check_ollama_installation():
         print("Warning: Ollama not detected. Some features may not work.")
     
-    with gr.Blocks(title="Sollama - AI Chat with Memory", theme=gr.themes.Soft()) as interface:
+    with gr.Blocks(title="Sollama - AI Chat with Memory", theme="soft") as interface:
         
         gr.Markdown("# Sollama - AI Chat with Memory")
         gr.Markdown("Chat with Ollama models with conversation memory and text-to-speech capabilities")
@@ -304,6 +306,18 @@ def create_interface():
                     interactive=False,
                     lines=2
                 )
+        
+                gr.Markdown("""
+                ### Features
+                - **Conversation Memory**: Context is preserved across messages
+                - **Model Switching**: Change models on the fly
+                - **System Prompts**: Customize assistant behavior
+                - **Memory Persistence**: Save and load conversation history
+                - **TTS Support**: Text-to-speech capabilities (desktop only)
+                - **Streaming**: Real-time response generation
+                - **Voice Selection**: Choose from available system voices
+                - **Custom TTS**: Speak any custom text
+                """)
             
             with gr.Column(scale=1):
                 # Settings panel
@@ -496,18 +510,6 @@ def create_interface():
             inputs=[tts_rate, tts_volume, tts_mute],
             outputs=model_status
         )
-        
-        gr.Markdown("""
-        ### Features
-        - **Conversation Memory**: Context is preserved across messages
-        - **Model Switching**: Change models on the fly
-        - **System Prompts**: Customize assistant behavior
-        - **Memory Persistence**: Save and load conversation history
-        - **TTS Support**: Text-to-speech capabilities (desktop only)
-        - **Streaming**: Real-time response generation
-        - **Voice Selection**: Choose from available system voices
-        - **Custom TTS**: Speak any custom text
-        """)
     
     return interface
 
