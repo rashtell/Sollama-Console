@@ -22,6 +22,7 @@ class SollamaGradioInterface:
         self.client = OllamaClient(DEFAULT_MODEL)
         self.is_processing = False
         self.available_models = []
+        self.last_response = ""
         self._load_available_models()
         
     def _load_available_models(self):
@@ -69,6 +70,9 @@ class SollamaGradioInterface:
             # Add to memory
             self.memory.add_exchange(message, response)
             
+            # Store last response for speak feature
+            self.last_response = response
+            
             # Add assistant response to history
             history.append({"role": "assistant", "content": response})
             
@@ -82,9 +86,97 @@ class SollamaGradioInterface:
         finally:
             self.is_processing = False
     
+    def speak_last_response(self) -> str:
+        """Speak the last assistant response"""
+        if not self.last_response:
+            return "No response to speak"
+        
+        if not self.tts.tts_available:
+            return "TTS not available on this system"
+        
+        try:
+            # Start speaking in a separate thread to avoid blocking UI
+            threading.Thread(
+                target=self.tts.speak_text,
+                args=(self.last_response,),
+                daemon=True
+            ).start()
+            return f"Speaking response ({len(self.last_response)} characters)..."
+        except Exception as e:
+            return f"Error speaking: {str(e)}"
+    
+    def speak_custom_text(self, text: str) -> str:
+        """Speak custom text"""
+        if not text.strip():
+            return "Please enter text to speak"
+        
+        if not self.tts.tts_available:
+            return "TTS not available on this system"
+        
+        try:
+            # Start speaking in a separate thread to avoid blocking UI
+            threading.Thread(
+                target=self.tts.speak_text,
+                args=(text,),
+                daemon=True
+            ).start()
+            return f"Speaking text ({len(text)} characters)..."
+        except Exception as e:
+            return f"Error speaking: {str(e)}"
+    
+    def test_tts(self) -> str:
+        """Test TTS with sample text"""
+        if not self.tts.tts_available:
+            return "TTS not available on this system"
+        
+        test_text = "This is a test of the text to speech system. Testing one, two, three."
+        try:
+            threading.Thread(
+                target=self.tts.speak_text,
+                args=(test_text,),
+                daemon=True
+            ).start()
+            return "Playing TTS test..."
+        except Exception as e:
+            return f"Error testing TTS: {str(e)}"
+    
+    def get_available_voices(self) -> str:
+        """Get list of available TTS voices"""
+        if not self.tts.tts_available:
+            return "TTS not available on this system"
+        
+        try:
+            voices = self.tts.get_voices()
+            if not voices:
+                return "No voices found"
+            
+            voice_list = "Available voices:\n\n"
+            for voice in voices:
+                marker = " (CURRENT)" if voice['current'] else ""
+                voice_list += f"{voice['index']}: {voice['name']}{marker}\n"
+            return voice_list
+        except Exception as e:
+            return f"Error getting voices: {str(e)}"
+    
+    def change_voice(self, voice_index: int) -> str:
+        """Change TTS voice"""
+        if not self.tts.tts_available:
+            return "TTS not available on this system"
+        
+        try:
+            if self.tts.set_voice(voice_index):
+                voices = self.tts.get_voices()
+                if voices and voice_index < len(voices):
+                    return f"Voice changed to: {voices[voice_index]['name']}"
+                return f"Voice changed to index: {voice_index}"
+            return "Failed to change voice or invalid voice index"
+        except Exception as e:
+            return f"Error changing voice: {str(e)}"
+    
     def clear_memory(self) -> tuple[List, str]:
         """Clear conversation memory"""
         self.memory.clear_history()
+        self.last_response = ""
         return [], "Memory cleared successfully!"
     
     def get_memory_status(self) -> str:
@@ -102,15 +194,15 @@ class SollamaGradioInterface:
         """Change the active model and return status with current model display"""
         if model_name.strip():
             self.client.model = model_name
-            current_model_display = f"{model_name}"
+            current_model_display = f"Current Model: {model_name}"
             status = f"Model changed to: {model_name}"
             return current_model_display, status
-        return f"{self.client.model}", "Please select a model"
+        return f"Current Model: {self.client.model}", "Please select a model"
     
     def refresh_models(self) -> tuple[gr.Dropdown, str, str]:
         """Refresh the list of available models"""
         self._load_available_models()
-        current_model_display = f"{self.client.model}"
+        current_model_display = f"Current Model: {self.client.model}"
         return (
             gr.Dropdown(choices=self.available_models, value=self.client.model),
             current_model_display,
@@ -119,7 +211,7 @@ class SollamaGradioInterface:
     
     def get_current_model_display(self) -> str:
         """Get the current model display text"""
-        return f"{self.client.model}"
+        return f"Current Model: {self.client.model}"
     
     def save_memory_file(self) -> str:
         """Save memory to file"""
@@ -205,6 +297,7 @@ def create_interface():
                 with gr.Row():
                     clear_btn = gr.Button("Clear Chat", size="sm")
                     memory_status_btn = gr.Button("Memory Status", size="sm")
+                    speak_last_btn = gr.Button("Speak Last Response", size="sm", variant="secondary")
                 
                 status_output = gr.Textbox(
                     label="Status",
@@ -269,6 +362,25 @@ def create_interface():
                         value=False
                     )
                     apply_tts_btn = gr.Button("Apply TTS Settings", size="sm")
+                    
+                    gr.Markdown("#### Voice Selection")
+                    list_voices_btn = gr.Button("List Available Voices", size="sm")
+                    voice_index_input = gr.Number(
+                        label="Voice Index",
+                        value=0,
+                        precision=0,
+                        minimum=0
+                    )
+                    change_voice_btn = gr.Button("Change Voice", size="sm")
+                    
+                    gr.Markdown("#### TTS Testing")
+                    test_tts_btn = gr.Button("Test TTS", size="sm")
+                    custom_text_input = gr.Textbox(
+                        label="Custom Text to Speak",
+                        placeholder="Enter text to speak...",
+                        lines=3
+                    )
+                    speak_custom_btn = gr.Button("Speak Custom Text", size="sm")
                 
                 with gr.Accordion("Memory Management", open=False):
                     save_memory_btn = gr.Button("Save Memory", size="sm")
@@ -325,7 +437,35 @@ def create_interface():
             outputs=[chatbot, model_status]
         )
         
-        # Model settings - Update both display and status
+        # TTS functionality
+        speak_last_btn.click(
+            app.speak_last_response,
+            outputs=status_output
+        )
+        
+        test_tts_btn.click(
+            app.test_tts,
+            outputs=model_status
+        )
+        
+        speak_custom_btn.click(
+            app.speak_custom_text,
+            inputs=custom_text_input,
+            outputs=model_status
+        )
+        
+        list_voices_btn.click(
+            app.get_available_voices,
+            outputs=model_status
+        )
+        
+        change_voice_btn.click(
+            app.change_voice,
+            inputs=voice_index_input,
+            outputs=model_status
+        )
+        
+        # Model settings
         model_dropdown.change(
             app.change_model,
             inputs=model_dropdown,
@@ -365,6 +505,8 @@ def create_interface():
         - **Memory Persistence**: Save and load conversation history
         - **TTS Support**: Text-to-speech capabilities (desktop only)
         - **Streaming**: Real-time response generation
+        - **Voice Selection**: Choose from available system voices
+        - **Custom TTS**: Speak any custom text
         """)
     
     return interface
