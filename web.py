@@ -1,18 +1,17 @@
 # File: gradio_interface.py
 """Gradio web interface for Sollama"""
 
-import gradio as gr
-import threading
 import tempfile
-import os
-from typing import List, Dict, Optional, Tuple
 from datetime import datetime
+from typing import Generator, List, Optional, Tuple
 
-from config import DEFAULT_MODEL, DEFAULT_OLLAMA_URL, DEFAULT_SPEECH_RATE, DEFAULT_VOLUME, DEFAULT_MAX_MEMORY
+import gradio as gr
+
+from config import (DEFAULT_MODEL, DEFAULT_SPEECH_RATE, DEFAULT_VOLUME)
 from memory_manager import ConversationMemory
-from tts_manager import TTSManager
 from ollama_client import OllamaClient
 from system_checker import SystemChecker
+from tts_manager import TTSManager
 
 # Try to import TTS libraries
 TTS_ENGINE = None
@@ -38,6 +37,7 @@ class SollamaGradioInterface:
         self.available_models = []
         self.available_voices = []
         self.last_response = ""
+        self.speak_while_streaming = False
         self._load_available_models()
         self._load_available_voices()
         
@@ -73,7 +73,7 @@ class SollamaGradioInterface:
     
     def _text_to_audio_file(self, text: str) -> Optional[str]:
         """Convert text to audio file for web playback"""
-        if not text.strip() or TTS_ENGINE != "pyttsx3":
+        if not text.strip() or TTS_ENGINE != "pyttsx3" or self.tts.muted:
             return None
         
         try:
@@ -91,7 +91,7 @@ class SollamaGradioInterface:
             temp_file.close()
             
             # Generate audio
-            engine = pyttsx3.init()
+            engine = pyttsx3.init() # type: ignore
             engine.setProperty('rate', self.tts.speech_rate)
             engine.setProperty('volume', self.tts.volume)
             
@@ -120,32 +120,34 @@ class SollamaGradioInterface:
             print(f"Error generating audio: {e}")
             return None
         
-    def chat(self, message: str, history: List[Dict]) -> List[Dict]:
-        """Process chat message and return updated history"""
+    def chat_stream(self, message: str, history: List[List]) -> Generator:
+        """Process chat message with streaming and return updated history"""
         if not message.strip():
-            return history
+            yield history, None
+            return
         
         if self.is_processing:
-            history.append({
-                "role": "assistant",
-                "content": "Please wait for the current response to complete..."
-            })
-            return history
+            yield history + [[message, "Please wait for the current response to complete..."]], None
+            return
         
         self.is_processing = True
         
         try:
             # Add user message to history
-            history.append({"role": "user", "content": message})
+            history = history + [[message, ""]]
             
             # Get full context with message
             messages = self.memory.get_full_context()
             messages.append({"role": "user", "content": message})
             
-            # Generate response
+            # Generate response with streaming
             response = ""
+            
             for chunk in self.client.generate_response(messages):
                 response += chunk
+                # Update the history with accumulated response
+                history[-1][1] = response
+                yield history, None
             
             # Add to memory
             self.memory.add_exchange(message, response)
@@ -153,15 +155,20 @@ class SollamaGradioInterface:
             # Store last response for speak feature
             self.last_response = response
             
-            # Add assistant response to history
-            history.append({"role": "assistant", "content": response})
+            # Generate audio if speak while streaming is enabled
+            audio_file = None
+            if self.speak_while_streaming and TTS_ENGINE == "pyttsx3":
+                audio_file = self._text_to_audio_file(response)
             
-            return history
+            yield history, audio_file
             
         except Exception as e:
             error_msg = f"Error: {str(e)}"
-            history.append({"role": "assistant", "content": error_msg})
-            return history
+            if history and len(history) > 0:
+                history[-1][1] = error_msg
+            else:
+                history = history + [[message, error_msg]]
+            yield history, None
         
         finally:
             self.is_processing = False
@@ -251,6 +258,29 @@ class SollamaGradioInterface:
             f"Refreshed! Found {len(self.available_voices)} voices"
         )
     
+    def update_speech_rate(self, rate: int) -> str:
+        """Update speech rate automatically"""
+        self.tts.speech_rate = rate
+        return f"Speech rate: {rate}"
+    
+    def update_volume(self, volume: float) -> str:
+        """Update volume automatically"""
+        self.tts.volume = volume
+        if self.tts.muted:
+            self.tts.muted = False
+            return f"Volume: {volume:.1f} (unmuted)"
+        return f"Volume: {volume:.1f}"
+    
+    def update_mute(self, muted: bool) -> str:
+        """Update mute state automatically"""
+        self.tts.muted = muted
+        return f"TTS {'muted' if muted else 'unmuted'}"
+    
+    def toggle_speak_while_streaming(self, enabled: bool) -> str:
+        """Toggle speak while streaming"""
+        self.speak_while_streaming = enabled
+        return f"Speak while streaming: {'enabled' if enabled else 'disabled'}"
+    
     def clear_memory(self) -> tuple[List, str]:
         """Clear conversation memory"""
         self.memory.clear_history()
@@ -299,21 +329,22 @@ class SollamaGradioInterface:
             return f"Memory saved to: {filename}"
         return "Failed to save memory"
     
-    def load_memory_file(self, file) -> tuple[List[Dict], str]:
+    def load_memory_file(self, file) -> tuple[List[List], str]:
         """Load memory from uploaded file"""
         if file is None:
             return [], "No file selected"
         
         try:
             if self.memory.load_memory(file.name):
-                # Rebuild chat history from loaded memory in messages format
+                # Rebuild chat history from loaded memory in tuple format
                 history = []
                 for i in range(0, len(self.memory.conversation_history), 2):
                     if i + 1 < len(self.memory.conversation_history):
-                        history.append(self.memory.conversation_history[i])
-                        history.append(self.memory.conversation_history[i + 1])
+                        user_msg = self.memory.conversation_history[i]['content']
+                        assistant_msg = self.memory.conversation_history[i + 1]['content']
+                        history.append([user_msg, assistant_msg])
                 
-                exchanges = len(history) // 2
+                exchanges = len(history)
                 return history, f"Memory loaded successfully! Restored {exchanges} exchanges."
             return [], "Failed to load memory"
         except Exception as e:
@@ -325,18 +356,6 @@ class SollamaGradioInterface:
         self.client.use_streaming = new_state
         mode = "enabled" if new_state else "disabled"
         return new_state, f"Streaming mode {mode}"
-    
-    def adjust_tts_settings(self, rate: int, volume: float, muted: bool) -> str:
-        """Adjust TTS settings"""
-        self.tts.speech_rate = rate
-        self.tts.volume = volume
-        self.tts.muted = muted
-        
-        status = f"TTS Settings Updated:\n"
-        status += f"Rate: {rate}\n"
-        status += f"Volume: {volume:.1f}\n"
-        status += f"Muted: {'Yes' if muted else 'No'}"
-        return status
 
 
 def create_interface():
@@ -348,7 +367,7 @@ def create_interface():
     if not SystemChecker.check_ollama_installation():
         print("Warning: Ollama not detected. Some features may not work.")
     
-    with gr.Blocks(title="Sollama - AI Chat with Memory", theme=gr.themes.Soft()) as interface:
+    with gr.Blocks(title="Sollama - AI Chat with Memory", theme="soft") as interface:
         
         gr.Markdown("# Sollama - AI Chat with Memory")
         gr.Markdown("Chat with Ollama models with conversation memory and text-to-speech capabilities")
@@ -358,7 +377,6 @@ def create_interface():
                 # Main chat interface
                 chatbot = gr.Chatbot(
                     label="Conversation",
-                    type="messages",
                     height=500,
                     show_copy_button=True
                 )
@@ -428,6 +446,12 @@ def create_interface():
                     update_prompt_btn = gr.Button("Update Prompt", size="sm")
                 
                 with gr.Accordion("TTS Settings", open=False):
+                    speak_streaming_checkbox = gr.Checkbox(
+                        label="Speak While Streaming",
+                        value=False,
+                        info="Automatically speak responses as they complete"
+                    )
+                    
                     tts_rate = gr.Slider(
                         label="Speech Rate",
                         minimum=50,
@@ -446,7 +470,6 @@ def create_interface():
                         label="Mute TTS",
                         value=False
                     )
-                    apply_tts_btn = gr.Button("Apply TTS Settings", size="sm")
                     
                     gr.Markdown("#### Voice Selection")
                     voice_dropdown = gr.Dropdown(
@@ -482,21 +505,23 @@ def create_interface():
         
         # Event handlers
         
-        # Chat functionality
-        def submit_message(message, history):
-            new_history = app.chat(message, history)
-            return new_history, ""
-        
+        # Chat functionality with streaming
         msg.submit(
-            submit_message,
+            app.chat_stream,
             inputs=[msg, chatbot],
-            outputs=[chatbot, msg]
+            outputs=[chatbot, audio_output]
+        ).then(
+            lambda: "",
+            outputs=msg
         )
         
         send_btn.click(
-            submit_message,
+            app.chat_stream,
             inputs=[msg, chatbot],
-            outputs=[chatbot, msg]
+            outputs=[chatbot, audio_output]
+        ).then(
+            lambda: "",
+            outputs=msg
         )
         
         # Memory management
@@ -549,6 +574,31 @@ def create_interface():
             outputs=[voice_dropdown, model_status]
         )
         
+        # TTS settings - auto-update
+        speak_streaming_checkbox.change(
+            app.toggle_speak_while_streaming,
+            inputs=speak_streaming_checkbox,
+            outputs=model_status
+        )
+        
+        tts_rate.change(
+            app.update_speech_rate,
+            inputs=tts_rate,
+            outputs=model_status
+        )
+        
+        tts_volume.change(
+            app.update_volume,
+            inputs=tts_volume,
+            outputs=model_status
+        )
+        
+        tts_mute.change(
+            app.update_mute,
+            inputs=tts_mute,
+            outputs=model_status
+        )
+        
         # Model settings
         model_dropdown.change(
             app.change_model,
@@ -574,13 +624,6 @@ def create_interface():
             outputs=status_output
         )
         
-        # TTS settings
-        apply_tts_btn.click(
-            app.adjust_tts_settings,
-            inputs=[tts_rate, tts_volume, tts_mute],
-            outputs=model_status
-        )
-        
         gr.Markdown("""
         ### Features
         - **Conversation Memory**: Context is preserved across messages
@@ -588,11 +631,13 @@ def create_interface():
         - **System Prompts**: Customize assistant behavior
         - **Memory Persistence**: Save and load conversation history
         - **TTS Support**: Text-to-speech with audio playback in browser
-        - **Streaming**: Real-time response generation
+        - **Streaming Responses**: See responses as they're generated
+        - **Auto-Speak**: Optionally speak responses automatically after streaming
         - **Voice Selection**: Choose from available system voices
         - **Custom TTS**: Speak any custom text
         
         **Note**: TTS generates audio files that play in your browser. Requires pyttsx3 to be installed.
+        Enable "Speak While Streaming" to automatically hear responses after they finish generating.
         """)
     
     return interface
