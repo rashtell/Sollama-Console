@@ -1,10 +1,7 @@
-"""Main Sollama application class"""
-
 from datetime import datetime
 from typing import Optional
 
 from command_handler import CommandHandler
-
 from config import *
 from conversation_logger import ConversationLogger
 from memory_manager import ConversationMemory
@@ -14,7 +11,6 @@ from tts_manager import TTSManager
 
 
 class SollamaApp:
-    """Main Sollama application with memory and TTS"""
     
     def __init__(self, 
                  model: str = DEFAULT_MODEL,

@@ -1,5 +1,3 @@
-"""Command handling and help system"""
-
 from datetime import datetime
 
 from memory_manager import ConversationMemory

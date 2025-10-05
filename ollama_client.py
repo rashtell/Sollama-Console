@@ -1,9 +1,9 @@
-"""Ollama API client and model management"""
-
 import json
 import re
+from typing import Dict, Iterator, List, Tuple
+
 import requests
-from typing import List, Dict, Tuple, Iterator
+
 from config import DEFAULT_OLLAMA_URL, SENTENCE_ENDINGS
 
 

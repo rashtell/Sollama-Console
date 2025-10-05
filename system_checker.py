@@ -1,8 +1,7 @@
-"""System requirements and installation checker"""
-
-import subprocess
 import platform
-from config import OLLAMA_WINDOWS_URL, OLLAMA_MAC_URL, OLLAMA_INSTALL_SCRIPT
+import subprocess
+
+from config import OLLAMA_INSTALL_SCRIPT, OLLAMA_MAC_URL, OLLAMA_WINDOWS_URL
 
 
 class SystemChecker:

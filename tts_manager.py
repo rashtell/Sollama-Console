@@ -1,5 +1,3 @@
-"""Text-to-Speech management and initialization"""
-
 import queue
 import threading
 from typing import List, Optional
@@ -7,7 +5,7 @@ from typing import List, Optional
 # Try to import TTS libraries
 TTS_ENGINE = None
 try:
-    import pyttsx3 # type: ignore
+    import pyttsx3  # type: ignore
     TTS_ENGINE = "pyttsx3"
 except ImportError:
     try:

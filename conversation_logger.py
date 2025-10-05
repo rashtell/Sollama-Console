@@ -1,5 +1,3 @@
-"""Conversation logging and file management"""
-
 from datetime import datetime
 from typing import Optional
 

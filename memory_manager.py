@@ -1,9 +1,8 @@
-"""Conversation memory management"""
-
 import json
 from datetime import datetime
-from typing import List, Dict, Optional
-from config import DEFAULT_SYSTEM_PROMPT, DEFAULT_MAX_MEMORY
+from typing import Dict, List, Optional
+
+from config import DEFAULT_MAX_MEMORY, DEFAULT_SYSTEM_PROMPT
 
 
 class ConversationMemory:
