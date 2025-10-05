@@ -1,7 +1,6 @@
-"""Main entry point for Sollama application"""
-
 import argparse
 import sys
+
 from config import *
 from sollama_app import SollamaApp
 

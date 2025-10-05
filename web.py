@@ -1,13 +1,16 @@
 # File: gradio_interface.py
 """Gradio web interface for Sollama"""
 
+import argparse
+import sys
 import tempfile
 from datetime import datetime
 from typing import Generator, List, Optional, Tuple
 
 import gradio as gr
 
-from config import (DEFAULT_MODEL, DEFAULT_SPEECH_RATE, DEFAULT_VOLUME)
+from config import (DEFAULT_MAX_MEMORY, DEFAULT_MODEL, DEFAULT_OLLAMA_URL,
+                    DEFAULT_SPEECH_RATE, DEFAULT_VOLUME)
 from memory_manager import ConversationMemory
 from ollama_client import OllamaClient
 from system_checker import SystemChecker
@@ -29,17 +32,30 @@ except ImportError:
 class SollamaGradioInterface:
     """Gradio web interface for Sollama"""
     
-    def __init__(self):
+    def __init__(self, 
+                 model: str = DEFAULT_MODEL,
+                 speech_rate: int = DEFAULT_SPEECH_RATE,
+                 volume: float = DEFAULT_VOLUME,
+                 voice_index: int = 0,
+                 muted: bool = False,
+                 speak_while_streaming: bool = False):
+        
         self.memory = ConversationMemory()
-        self.tts = TTSManager()
-        self.client = OllamaClient(DEFAULT_MODEL)
+        self.tts = TTSManager(speech_rate, volume)
+        self.client = OllamaClient(model)
         self.is_processing = False
         self.available_models = []
         self.available_voices = []
         self.last_response = ""
-        self.speak_while_streaming = False
+        self.speak_while_streaming = speak_while_streaming
+        self.tts.muted = muted
+        
         self._load_available_models()
         self._load_available_voices()
+        
+        # Set initial voice if specified
+        if voice_index > 0:
+            self.tts.set_voice(voice_index)
         
     def _load_available_models(self):
         """Load available models on initialization"""
@@ -358,14 +374,21 @@ class SollamaGradioInterface:
         return new_state, f"Streaming mode {mode}"
 
 
-def create_interface():
+def create_interface(app: SollamaGradioInterface):
     """Create and configure the Gradio interface"""
-    
-    app = SollamaGradioInterface()
     
     # Check system requirements
     if not SystemChecker.check_ollama_installation():
         print("Warning: Ollama not detected. Some features may not work.")
+    
+    # Get current voice index for dropdown default
+    current_voice_index = 0
+    if app.tts.current_voice_id:
+        voices = app.tts.get_voices()
+        for v in voices:
+            if v['current']:
+                current_voice_index = v['index']
+                break
     
     with gr.Blocks(title="Sollama - AI Chat with Memory", theme="soft") as interface:
         
@@ -448,7 +471,7 @@ def create_interface():
                 with gr.Accordion("TTS Settings", open=False):
                     speak_streaming_checkbox = gr.Checkbox(
                         label="Speak While Streaming",
-                        value=False,
+                        value=app.speak_while_streaming,
                         info="Automatically speak responses as they complete"
                     )
                     
@@ -456,26 +479,26 @@ def create_interface():
                         label="Speech Rate",
                         minimum=50,
                         maximum=300,
-                        value=DEFAULT_SPEECH_RATE,
+                        value=app.tts.speech_rate,
                         step=25
                     )
                     tts_volume = gr.Slider(
                         label="Volume",
                         minimum=0.0,
                         maximum=1.0,
-                        value=DEFAULT_VOLUME,
+                        value=app.tts.volume,
                         step=0.1
                     )
                     tts_mute = gr.Checkbox(
                         label="Mute TTS",
-                        value=False
+                        value=app.tts.muted
                     )
                     
                     gr.Markdown("#### Voice Selection")
                     voice_dropdown = gr.Dropdown(
                         label="Select Voice",
                         choices=app.get_voice_choices(),
-                        value=0,
+                        value=current_voice_index,
                         interactive=True
                     )
                     refresh_voices_btn = gr.Button("Refresh Voices", size="sm")
@@ -644,15 +667,186 @@ def create_interface():
 
 
 def main():
-    """Launch the Gradio interface"""
-    interface = create_interface()
+    """Launch the Gradio interface with command line arguments"""
+    parser = argparse.ArgumentParser(
+        description="Sollama Gradio Web Interface",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    # Server settings
+    server_group = parser.add_argument_group('Server Settings')
+    server_group.add_argument("--host", "-H", default="127.0.0.1",
+                             help="Host to bind the server to")
+    server_group.add_argument("--port", "-p", type=int, default=None,
+                             help="Port to run the server on (auto-select if not specified)")
+    server_group.add_argument("--share", action="store_true",
+                             help="Create a public shareable link")
+    server_group.add_argument("--auth", type=str, metavar="USER:PASS",
+                             help="Username and password for authentication (format: user:pass)")
+    server_group.add_argument("--server-name", type=str, default=None,
+                             help="Server name for custom domain")
+    server_group.add_argument("--root-path", type=str, default=None,
+                             help="Root path for reverse proxy")
+    server_group.add_argument("--ssl-certfile", type=str, default=None,
+                             help="Path to SSL certificate file")
+    server_group.add_argument("--ssl-keyfile", type=str, default=None,
+                             help="Path to SSL key file")
+    
+    # Model settings
+    model_group = parser.add_argument_group('Model Settings')
+    model_group.add_argument("--model", "-m", default=DEFAULT_MODEL,
+                            help="Ollama model to use")
+    model_group.add_argument("--ollama-url", "-u", default=DEFAULT_OLLAMA_URL,
+                            help="Ollama server URL")
+    
+    # TTS settings
+    tts_group = parser.add_argument_group('TTS Settings')
+    tts_group.add_argument("--speech-rate", "-r", type=int, default=DEFAULT_SPEECH_RATE,
+                          help="Speech rate (50-300)")
+    tts_group.add_argument("--volume", "-v", type=float, default=DEFAULT_VOLUME,
+                          help="Speech volume (0.0-1.0)")
+    tts_group.add_argument("--voice", type=int, default=0,
+                          help="Voice index to use (0 for default)")
+    tts_group.add_argument("--mute", action="store_true",
+                          help="Start with TTS muted")
+    tts_group.add_argument("--speak-streaming", action="store_true",
+                          help="Automatically speak responses after streaming")
+    
+    # Memory settings
+    memory_group = parser.add_argument_group('Memory Settings')
+    memory_group.add_argument("--max-memory", "-mm", type=int, default=DEFAULT_MAX_MEMORY,
+                             help="Maximum conversation exchanges to remember")
+    memory_group.add_argument("--system-prompt", "-sp", type=str,
+                             help="Custom system prompt for the assistant")
+    memory_group.add_argument("--load-memory", "-lm", type=str,
+                             help="Load conversation memory from file")
+    
+    args = parser.parse_args()
+    
+    # Validate arguments
+    if args.volume < 0.0 or args.volume > 1.0:
+        print("Error: Volume must be between 0.0 and 1.0")
+        sys.exit(1)
+    
+    if args.speech_rate < 50 or args.speech_rate > 300:
+        print("Error: Speech rate must be between 50 and 300")
+        sys.exit(1)
+    
+    # Parse authentication
+    auth_tuple = None
+    if args.auth:
+        if ':' not in args.auth:
+            print("Error: Auth must be in format 'username:password'")
+            sys.exit(1)
+        auth_tuple = tuple(args.auth.split(':', 1))
+    
+    # Create the application
+    print("Initializing Sollama...")
+    app = SollamaGradioInterface(
+        model=args.model,
+        speech_rate=args.speech_rate,
+        volume=args.volume,
+        voice_index=args.voice,
+        muted=args.mute,
+        speak_while_streaming=args.speak_streaming
+    )
+    
+    # Update Ollama URL if specified
+    if args.ollama_url != DEFAULT_OLLAMA_URL:
+        app.client.ollama_url = args.ollama_url
+    
+    # Update memory settings if specified
+    if args.max_memory != DEFAULT_MAX_MEMORY:
+        app.memory.max_history = args.max_memory
+    
+    if args.system_prompt:
+        app.memory.set_system_prompt(args.system_prompt)
+    
+    if args.load_memory:
+        app.memory.load_memory(args.load_memory)
+    
+    # Create interface
+    interface = create_interface(app)
+    
+    # Launch configuration
+    print("\nLaunching Gradio interface...")
+    print(f"  Host: {args.host}")
+    print(f"  Port: {args.port if args.port else 'auto-select'}")
+    print(f"  Share: {args.share}")
+    print(f"  Model: {args.model}")
+    print(f"  Speech Rate: {args.speech_rate}")
+    print(f"  Volume: {args.volume}")
+    print(f"  Voice Index: {args.voice}")
+    print(f"  Muted: {args.mute}")
+    print(f"  Speak While Streaming: {args.speak_streaming}")
+    print()
+    
+    # Launch interface
     interface.launch(
-        share=False,
-        server_name="127.0.0.1",
-        server_port=None,
-        show_error=True
+        share=args.share,
+        server_name=args.host if not args.server_name else args.server_name,
+        server_port=args.port,
+        show_error=True,
+        auth=auth_tuple,
+        root_path=args.root_path,
+        ssl_certfile=args.ssl_certfile,
+        ssl_keyfile=args.ssl_keyfile
     )
 
 
 if __name__ == "__main__":
     main()
+
+
+"""
+USAGE EXAMPLES:
+
+Basic Usage:
+    python gradio_interface.py
+
+Custom Server Settings:
+    python gradio_interface.py --host 0.0.0.0 --port 8080
+    python gradio_interface.py --share
+    python gradio_interface.py --auth admin:password123
+
+TTS Configuration:
+    python gradio_interface.py --speech-rate 200 --volume 0.8
+    python gradio_interface.py --voice 2 --speak-streaming
+    python gradio_interface.py --mute
+
+Model Configuration:
+    python gradio_interface.py --model llama3.2:1b
+    python gradio_interface.py --model mistral --ollama-url http://192.168.1.100:11434
+
+Memory Configuration:
+    python gradio_interface.py --max-memory 100
+    python gradio_interface.py --system-prompt "You are a coding expert"
+    python gradio_interface.py --load-memory conversation_20240101.json
+
+Combined Examples:
+    # Public server with custom voice and model
+    python gradio_interface.py --share --model llama3.2:1b --voice 1 --speak-streaming
+    
+    # Secure server with authentication
+    python gradio_interface.py --host 0.0.0.0 --port 443 --auth user:pass --ssl-certfile cert.pem --ssl-keyfile key.pem
+    
+    # Custom configuration for specific use case
+    python gradio_interface.py --model codellama --system-prompt "You are a Python expert" --speech-rate 150 --volume 0.5
+
+SSL/TLS Setup:
+    # Generate self-signed certificate (for testing)
+    openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
+    
+    # Launch with SSL
+    python gradio_interface.py --ssl-certfile cert.pem --ssl-keyfile key.pem --port 443
+
+Reverse Proxy Setup:
+    # Behind nginx or apache
+    python gradio_interface.py --root-path /sollama --host 127.0.0.1 --port 7860
+
+Environment Variables (alternative to command line):
+    export SOLLAMA_HOST=0.0.0.0
+    export SOLLAMA_PORT=8080
+    export SOLLAMA_MODEL=llama3.2:1b
+    python gradio_interface.py
+"""
