@@ -41,7 +41,7 @@ class TTSManager:
                 test_engine = pyttsx3.init() # type: ignore
                 voices = test_engine.getProperty('voices')
                 print("Available TTS voices:")
-                for i, voice in enumerate(voices[:5]):  # type: ignore # Show first 5
+                for i, voice in enumerate(voices):  # type: ignore
                     print(f"  {i}: {voice.name}")
                 test_engine.stop()
                 del test_engine
