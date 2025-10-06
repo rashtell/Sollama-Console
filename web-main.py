@@ -1,6 +1,3 @@
-# File: gradio_interface.py
-"""Gradio web interface for Sollama"""
-
 import argparse
 import sys
 import tempfile
@@ -11,10 +8,10 @@ import gradio as gr
 
 from config import (DEFAULT_MAX_MEMORY, DEFAULT_MODEL, DEFAULT_OLLAMA_URL,
                     DEFAULT_SPEECH_RATE, DEFAULT_VOLUME)
-from memory_manager import ConversationMemory
-from ollama_client import OllamaClient
-from system_checker import SystemChecker
-from tts_manager import TTSManager
+from utils.memory_manager import ConversationMemory
+from utils.ollama_client import OllamaClient
+from utils.system_checker import SystemChecker
+from utils.tts_manager import TTSManager
 
 # Try to import TTS libraries
 TTS_ENGINE = None

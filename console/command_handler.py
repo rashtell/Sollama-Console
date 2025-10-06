@@ -1,8 +1,8 @@
 from datetime import datetime
 
-from memory_manager import ConversationMemory
-from ollama_client import OllamaClient
-from tts_manager import TTSManager
+from utils.memory_manager import ConversationMemory
+from utils.ollama_client import OllamaClient
+from utils.tts_manager import TTSManager
 
 
 class CommandHandler:

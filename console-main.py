@@ -1,8 +1,9 @@
 import argparse
 import sys
 
-from config import *
-from sollama_app import SollamaApp
+from config import (DEFAULT_MAX_MEMORY, DEFAULT_MODEL, DEFAULT_OLLAMA_URL,
+                    DEFAULT_SPEECH_RATE, DEFAULT_VOLUME)
+from console.sollama_app import SollamaApp
 
 
 def main():

@@ -1,5 +1,3 @@
-"""Configuration constants and settings for Sollama"""
-
 DEFAULT_MODEL = "llama3.2"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_SPEECH_RATE = 175
